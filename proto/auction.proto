@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+package auction;
+
+option go_package = "github.com/diego/k8s-agentic-scheduler/proto/auction";
+
+// The ContractNet service for resource bidding
+service ContractNet {
+    // Request a bid for a task
+    rpc RequestBid(TaskRequest) returns (BidResponse);
+}
+
+// Data sent by the Manager Agent
+message TaskRequest {
+    string task_id = 1;
+    double cpu_req_norm = 2; // Normalized CPU requirement (0.0 to 1.0)
+    double ram_req_norm = 3; // Normalized RAM requirement (0.0 to 1.0)
+}
+
+// Data returned by the Node Agent
+message BidResponse {
+    string node_id = 1;
+    double f1_cpu_frag = 2; // Fragmentation f1 (CPU)
+    double f3_ram_frag = 3; // Fragmentation f3 (RAM)
+    bool accepted = 4; // Whether the node can host the task
+}
