@@ -6,6 +6,7 @@ import (
 	"time"
 
 	auctioncore "github.com/diego/k8s-agentic-scheduler/internal/auction"
+	"github.com/diego/k8s-agentic-scheduler/internal/nsga3"
 	auctionpb "github.com/diego/k8s-agentic-scheduler/proto"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -26,10 +27,12 @@ type NodeResult struct {
 }
 
 type AuctionResult struct {
-	Task        auctioncore.Task
-	NodeResults []NodeResult
-	Winner      auctioncore.Bid
-	HasWinner   bool
+	Task              auctioncore.Task
+	NodeResults       []NodeResult
+	Winner            auctioncore.Bid
+	HasWinner         bool
+	SelectionStrategy string
+	NSGA3Preparation  *nsga3.Preparation
 }
 
 func NewGRPCBidRequester(timeout time.Duration) GRPCBidRequester {
@@ -69,6 +72,11 @@ func (r GRPCBidRequester) RequestBid(ctx context.Context, address string, task a
 }
 
 func RunAuction(ctx context.Context, requester BidRequester, nodes []string, task auctioncore.Task) AuctionResult {
+	result, _ := RunAuctionWithSelector(ctx, requester, NewBaselineSelector(), nodes, task)
+	return result
+}
+
+func RunAuctionWithSelector(ctx context.Context, requester BidRequester, selector WinnerSelector, nodes []string, task auctioncore.Task) (AuctionResult, error) {
 	results := make([]NodeResult, len(nodes))
 
 	var wg sync.WaitGroup
@@ -97,12 +105,17 @@ func RunAuction(ctx context.Context, requester BidRequester, nodes []string, tas
 		bids = append(bids, result.Bid)
 	}
 
-	winner, ok := auctioncore.SelectWinner(bids)
+	selection, err := selector.Select(ctx, task, bids)
+	if err != nil {
+		return AuctionResult{}, err
+	}
 
 	return AuctionResult{
-		Task:        task,
-		NodeResults: results,
-		Winner:      winner,
-		HasWinner:   ok,
-	}
+		Task:              task,
+		NodeResults:       results,
+		Winner:            selection.Winner,
+		HasWinner:         selection.HasWinner,
+		SelectionStrategy: selection.Strategy,
+		NSGA3Preparation:  selection.NSGA3Preparation,
+	}, nil
 }

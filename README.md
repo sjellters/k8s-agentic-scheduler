@@ -5,7 +5,7 @@ A distributed Kubernetes scheduling MVP built in Go. Current implementation focu
 ## Architecture
 
 - **Hot-Path (implemented):** A Go scheduling baseline that uses the **Contract Net Protocol (CNP)** for resource auctions and simple winner selection based on remaining normalized CPU/RAM capacity.
-- **Optimization layer (planned):** A native **NSGA-III** implementation that will replace or augment the current baseline selector once it is complete.
+- **Optimization layer (skeleton in progress):** A native **NSGA-III** package now exposes candidate preparation and reference-point generation, while baseline winner selection remains the active decision path.
 - **Cold-Path (planned):** An out-of-band **XAI Supervisor** for policy injection and explainability outside the critical scheduling loop.
 
 ## Project Structure
@@ -17,7 +17,7 @@ The repository is organized following standard Go patterns:
     - `cmd/node_agent/`: The **Node Agent**. Runs on worker nodes, evaluates local resource availability, and participates in auctions.
 - `internal/`: Shared internal packages for implemented and planned scheduler logic.
     - `internal/auction/`: Current auction-domain logic for bid evaluation and baseline winner selection.
-    - `internal/nsga3/`: Reserved for the future optimizer implementation.
+    - `internal/nsga3/`: Native NSGA-III skeleton with candidate types, reference points, and a preparation entrypoint.
 - `proto/`: Protocol Buffers definitions and generated Go code.
     - `auction.proto`: Defines the `ContractNet` gRPC service for bidding.
 
@@ -30,7 +30,7 @@ The system operates as a distributed auction-based scheduler:
 3.  **Request for Bids (gRPC)**: The Manager broadcasts a `TaskRequest` concurrently to all Node Agents.
 4.  **Bidding Logic**: Each Node Agent evaluates capacity, computes fragmentation ($f_1$, $f_3$), and returns a `BidResponse`.
 5.  **Baseline Winner Selection**: The Manager collects accepted bids and picks the node with the highest combined remaining CPU/RAM score.
-6.  **Next Layer (planned)**: NSGA-III will replace or augment the baseline selector once the optimizer package is implemented.
+6.  **NSGA-III Skeleton (available)**: The Manager can invoke the optimizer preparation path to build candidates and reference points while still falling back to the baseline selector.
 7.  **Current Demo Output**: The Manager reports the winning node; Kubernetes API binding is not implemented in this MVP yet.
 
 ## Development
@@ -51,4 +51,7 @@ go run cmd/node_agent/main.go --port 50051 --id node-alpha
 
 # Run manager
 go run cmd/manager/main.go --nodes "localhost:50051"
+
+# Run manager with the NSGA-III skeleton trace
+go run cmd/manager/main.go --nodes "localhost:50051" --selector nsga3
 ```

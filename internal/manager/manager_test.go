@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	auctioncore "github.com/diego/k8s-agentic-scheduler/internal/auction"
+	"github.com/diego/k8s-agentic-scheduler/internal/nsga3"
 )
 
 type fakeRequester struct {
@@ -73,5 +74,40 @@ func TestRunAuctionPreservesPerNodeErrors(t *testing.T) {
 
 	if result.Winner.NodeID != "node-ok" {
 		t.Fatalf("expected node-ok, got %s", result.Winner.NodeID)
+	}
+}
+
+func TestRunAuctionWithSelectorInvokesNSGA3Skeleton(t *testing.T) {
+	t.Parallel()
+
+	selector, err := NewNSGA3Selector(nsga3.DefaultConfig())
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+
+	result, err := RunAuctionWithSelector(context.Background(), fakeRequester{
+		bids: map[string]auctioncore.Bid{
+			"node-a": {NodeID: "node-a", Accepted: true, CPUFragmentation: 0.20, RAMFragmentation: 0.20},
+			"node-b": {NodeID: "node-b", Accepted: true, CPUFragmentation: 0.35, RAMFragmentation: 0.25},
+		},
+	}, selector, []string{"node-a", "node-b"}, auctioncore.Task{ID: "pod-c", CPUReqNorm: 0.25, RAMReqNorm: 0.40})
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+
+	if result.SelectionStrategy != "nsga3-skeleton" {
+		t.Fatalf("expected nsga3-skeleton, got %s", result.SelectionStrategy)
+	}
+
+	if result.NSGA3Preparation == nil {
+		t.Fatalf("expected nsga3 preparation trace")
+	}
+
+	if len(result.NSGA3Preparation.ReferencePoints) == 0 {
+		t.Fatalf("expected reference points in nsga3 trace")
+	}
+
+	if result.Winner.NodeID != "node-b" {
+		t.Fatalf("expected baseline fallback winner node-b, got %s", result.Winner.NodeID)
 	}
 }
