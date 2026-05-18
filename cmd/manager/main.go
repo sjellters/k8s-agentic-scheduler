@@ -72,13 +72,38 @@ func main() {
 		fmt.Printf(" [+] NODE: %-10s | STATUS: BID SUBMITTED (F1: %.4f, F3: %.4f)\n", bid.NodeID, bid.CPUFragmentation, bid.RAMFragmentation)
 	}
 
+	log.Printf(" SELECTION STRATEGY: %s", result.SelectionStrategy)
+	logBaselineTrace(result)
 	if result.NSGA3Preparation != nil {
+		preparation := result.NSGA3Preparation
 		log.Printf(
-			" NSGA3 SKELETON: %d candidates | %d reference points | %d objectives",
-			len(result.NSGA3Preparation.Candidates),
-			len(result.NSGA3Preparation.ReferencePoints),
-			result.NSGA3Preparation.Config.Objectives,
+			" NSGA3 TRACE: %d candidates | %d reference points | %d fronts | %d objectives",
+			len(preparation.Candidates),
+			len(preparation.ReferencePoints),
+			len(preparation.Fronts),
+			preparation.Config.Objectives,
 		)
+		log.Printf(" IDEAL POINT: %s", formatValues(preparation.IdealPoint))
+		log.Printf(" ACTIVE REFERENCE POINT: %v", preparation.ReferencePoints[preparation.ActiveReferencePoint].Coordinates)
+		for _, evaluation := range preparation.Evaluations {
+			log.Printf(
+				" NSGA3 CANDIDATE: node %s | raw %s | normalized %s | front %d | distance %.4f | normalized-sum %.4f",
+				evaluation.Candidate.NodeID,
+				formatValues(evaluation.Candidate.Objectives),
+				formatValues(evaluation.NormalizedObjectives),
+				evaluation.FrontRank,
+				evaluation.Distance,
+				sumValues(evaluation.NormalizedObjectives),
+			)
+		}
+		if preparation.SelectedCandidate != nil {
+			log.Printf(
+				" NSGA3 WINNER TRACE: node %s | front %d | distance %.4f | balanced over pure sum",
+				preparation.SelectedCandidate.Candidate.NodeID,
+				preparation.SelectedCandidate.FrontRank,
+				preparation.SelectedCandidate.Distance,
+			)
+		}
 	}
 
 	fmt.Println("------------------------------------------")
@@ -90,4 +115,63 @@ func main() {
 		fmt.Printf(" >>> AUCTION FAILED: NO SUITABLE NODES FOUND <<<\n")
 	}
 	fmt.Println("------------------------------------------")
+}
+
+func logBaselineTrace(result auctionmanager.AuctionResult) {
+	highestScore := 0.0
+	highestNodes := make([]string, 0)
+	firstAccepted := true
+
+	for _, nodeResult := range result.NodeResults {
+		if nodeResult.Err != nil || !nodeResult.Bid.Accepted {
+			continue
+		}
+
+		bid := nodeResult.Bid
+		score := bid.Score()
+		log.Printf(
+			" BASELINE CANDIDATE: node %s | F1 %.4f + F3 %.4f = score %.4f",
+			bid.NodeID,
+			bid.CPUFragmentation,
+			bid.RAMFragmentation,
+			score,
+		)
+
+		if firstAccepted || score > highestScore {
+			highestScore = score
+			highestNodes = []string{bid.NodeID}
+			firstAccepted = false
+			continue
+		}
+
+		if score == highestScore {
+			highestNodes = append(highestNodes, bid.NodeID)
+		}
+	}
+
+	if len(highestNodes) > 1 {
+		log.Printf(
+			" BASELINE TIE: score %.4f shared by %s | winner resolved by first highest score encountered",
+			highestScore,
+			strings.Join(highestNodes, ", "),
+		)
+	}
+}
+
+func formatValues(values []float64) string {
+	parts := make([]string, 0, len(values))
+	for _, value := range values {
+		parts = append(parts, fmt.Sprintf("%.4f", value))
+	}
+
+	return "[" + strings.Join(parts, ", ") + "]"
+}
+
+func sumValues(values []float64) float64 {
+	total := 0.0
+	for _, value := range values {
+		total += value
+	}
+
+	return total
 }

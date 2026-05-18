@@ -4,8 +4,8 @@ A distributed Kubernetes scheduling MVP built in Go. Current implementation focu
 
 ## Architecture
 
-- **Hot-Path (implemented):** A Go scheduling baseline that uses the **Contract Net Protocol (CNP)** for resource auctions and simple winner selection based on remaining normalized CPU/RAM capacity.
-- **Optimization layer (skeleton in progress):** A native **NSGA-III** package now exposes candidate preparation and reference-point generation, while baseline winner selection remains the active decision path.
+- **Hot-Path (implemented):** A Go scheduling baseline that uses the **Contract Net Protocol (CNP)** for resource auctions and baseline winner selection based on remaining normalized CPU/RAM capacity.
+- **Optimization layer (first working pass):** A native **NSGA-III** package now performs candidate preparation, nondominated front construction, balanced reference-point guidance, and a first optimizer-driven winner selection pass.
 - **Cold-Path (planned):** An out-of-band **XAI Supervisor** for policy injection and explainability outside the critical scheduling loop.
 
 ## Project Structure
@@ -13,11 +13,11 @@ A distributed Kubernetes scheduling MVP built in Go. Current implementation focu
 The repository is organized following standard Go patterns:
 
 - `cmd/`: Application entry points. Each subdirectory corresponds to a standalone binary.
-    - `cmd/manager/`: The **Manager Agent**. Orchestrates pod scheduling, manages the auction process, and selects a winner with the current baseline scorer.
+    - `cmd/manager/`: The **Manager Agent**. Orchestrates pod scheduling, manages the auction process, and can select a winner with either the baseline scorer or the NSGA-III first pass.
     - `cmd/node_agent/`: The **Node Agent**. Runs on worker nodes, evaluates local resource availability, and participates in auctions.
 - `internal/`: Shared internal packages for implemented and planned scheduler logic.
     - `internal/auction/`: Current auction-domain logic for bid evaluation and baseline winner selection.
-    - `internal/nsga3/`: Native NSGA-III skeleton with candidate types, reference points, and a preparation entrypoint.
+    - `internal/nsga3/`: Native NSGA-III implementation with candidate preparation, nondominated fronts, reference points, and selection trace data.
 - `proto/`: Protocol Buffers definitions and generated Go code.
     - `auction.proto`: Defines the `ContractNet` gRPC service for bidding.
 
@@ -29,8 +29,8 @@ The system operates as a distributed auction-based scheduler:
 2.  **Auction Initialization**: The `manager` is invoked with a target pod request.
 3.  **Request for Bids (gRPC)**: The Manager broadcasts a `TaskRequest` concurrently to all Node Agents.
 4.  **Bidding Logic**: Each Node Agent evaluates capacity, computes fragmentation ($f_1$, $f_3$), and returns a `BidResponse`.
-5.  **Baseline Winner Selection**: The Manager collects accepted bids and picks the node with the highest combined remaining CPU/RAM score.
-6.  **NSGA-III Skeleton (available)**: The Manager can invoke the optimizer preparation path to build candidates and reference points while still falling back to the baseline selector.
+5.  **Baseline Winner Selection**: The Manager can keep the highest combined remaining CPU/RAM score as an explicit comparison path.
+6.  **NSGA-III First Pass**: The Manager can transform accepted bids into optimizer candidates, build nondominated fronts, pick the balanced reference point, and select the winner from the best front.
 7.  **Current Demo Output**: The Manager reports the winning node; Kubernetes API binding is not implemented in this MVP yet.
 
 ## Development
@@ -52,6 +52,6 @@ go run cmd/node_agent/main.go --port 50051 --id node-alpha
 # Run manager
 go run cmd/manager/main.go --nodes "localhost:50051"
 
-# Run manager with the NSGA-III skeleton trace
+# Run manager with the NSGA-III first-pass trace
 go run cmd/manager/main.go --nodes "localhost:50051" --selector nsga3
 ```

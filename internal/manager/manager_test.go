@@ -95,8 +95,8 @@ func TestRunAuctionWithSelectorInvokesNSGA3Skeleton(t *testing.T) {
 		t.Fatalf("expected nil error, got %v", err)
 	}
 
-	if result.SelectionStrategy != "nsga3-skeleton" {
-		t.Fatalf("expected nsga3-skeleton, got %s", result.SelectionStrategy)
+	if result.SelectionStrategy != "nsga3-first-pass" {
+		t.Fatalf("expected nsga3-first-pass, got %s", result.SelectionStrategy)
 	}
 
 	if result.NSGA3Preparation == nil {
@@ -108,6 +108,14 @@ func TestRunAuctionWithSelectorInvokesNSGA3Skeleton(t *testing.T) {
 	}
 
 	if result.Winner.NodeID != "node-b" {
-		t.Fatalf("expected baseline fallback winner node-b, got %s", result.Winner.NodeID)
+		t.Fatalf("expected nsga3 winner node-b, got %s", result.Winner.NodeID)
+	}
+
+	if result.NSGA3Preparation.SelectedCandidate == nil {
+		t.Fatalf("expected selected candidate trace")
+	}
+
+	if len(result.NSGA3Preparation.Evaluations) != 2 {
+		t.Fatalf("expected 2 candidate evaluations, got %d", len(result.NSGA3Preparation.Evaluations))
 	}
 }

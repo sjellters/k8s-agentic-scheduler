@@ -58,9 +58,21 @@ func (s NSGA3Selector) Select(ctx context.Context, task auctioncore.Task, bids [
 	}
 
 	candidates := nsga3.CandidatesFromBids(bids)
-	preparation, err := s.optimizer.Prepare(candidates)
+	nsga3Selection, err := s.optimizer.Select(candidates)
 	if err != nil {
 		return Selection{}, err
+	}
+
+	if nsga3Selection.HasWinner {
+		winnerBid, ok := bidByNodeID(bids, nsga3Selection.Winner.NodeID)
+		if ok {
+			return Selection{
+				Winner:           winnerBid,
+				HasWinner:        true,
+				Strategy:         "nsga3-first-pass",
+				NSGA3Preparation: &nsga3Selection.Preparation,
+			}, nil
+		}
 	}
 
 	fallbackSelection, err := s.fallback.Select(ctx, task, bids)
@@ -68,8 +80,18 @@ func (s NSGA3Selector) Select(ctx context.Context, task auctioncore.Task, bids [
 		return Selection{}, err
 	}
 
-	fallbackSelection.Strategy = "nsga3-skeleton"
-	fallbackSelection.NSGA3Preparation = &preparation
+	fallbackSelection.Strategy = "nsga3-fallback-baseline"
+	fallbackSelection.NSGA3Preparation = &nsga3Selection.Preparation
 
 	return fallbackSelection, nil
+}
+
+func bidByNodeID(bids []auctioncore.Bid, nodeID string) (auctioncore.Bid, bool) {
+	for _, bid := range bids {
+		if bid.NodeID == nodeID && bid.Accepted {
+			return bid, true
+		}
+	}
+
+	return auctioncore.Bid{}, false
 }

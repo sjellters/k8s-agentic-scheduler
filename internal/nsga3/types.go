@@ -14,10 +14,34 @@ type ReferencePoint struct {
 	Coordinates []float64
 }
 
+type Front struct {
+	Rank             int
+	CandidateNodeIDs []string
+}
+
+type CandidateEvaluation struct {
+	Candidate            Candidate
+	FrontRank            int
+	NormalizedObjectives []float64
+	ReferencePointIndex  int
+	Distance             float64
+}
+
 type Preparation struct {
-	Config          Config
-	Candidates      []Candidate
-	ReferencePoints []ReferencePoint
+	Config               Config
+	Candidates           []Candidate
+	ReferencePoints      []ReferencePoint
+	Fronts               []Front
+	IdealPoint           []float64
+	ActiveReferencePoint int
+	Evaluations          []CandidateEvaluation
+	SelectedCandidate    *CandidateEvaluation
+}
+
+type Selection struct {
+	Preparation Preparation
+	Winner      Candidate
+	HasWinner   bool
 }
 
 func DefaultConfig() Config {
