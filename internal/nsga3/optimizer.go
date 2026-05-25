@@ -13,6 +13,9 @@ func New(config Config) (Optimizer, error) {
 	if config.Divisions <= 0 {
 		return Optimizer{}, fmt.Errorf("divisions must be positive")
 	}
+	if len(config.ObjectiveNames) > 0 && len(config.ObjectiveNames) != config.Objectives {
+		return Optimizer{}, fmt.Errorf("objective names count must match objectives")
+	}
 
 	return Optimizer{config: config}, nil
 }
@@ -34,12 +37,12 @@ func (o Optimizer) Prepare(candidates []Candidate) (Preparation, error) {
 	}
 
 	return Preparation{
-		Config:          o.config,
-		Candidates:      candidates,
-		ReferencePoints: referencePoints,
-		Fronts:          fronts,
-		// IdealPoint:      idealPoint(candidates, o.config.Objectives),
-		IdealPoint:           []float64{0.8, 0.6},
+		Config:               o.config,
+		ObjectiveNames:       o.config.ObjectiveNames,
+		Candidates:           candidates,
+		ReferencePoints:      referencePoints,
+		Fronts:               fronts,
+		IdealPoint:           idealPoint(candidates, o.config.Objectives),
 		ActiveReferencePoint: activeReferencePoint,
 	}, nil
 }

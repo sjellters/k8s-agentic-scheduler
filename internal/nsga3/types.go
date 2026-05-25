@@ -1,8 +1,9 @@
 package nsga3
 
 type Config struct {
-	Objectives int
-	Divisions  int
+	Objectives     int
+	Divisions      int
+	ObjectiveNames []string
 }
 
 type Candidate struct {
@@ -29,6 +30,7 @@ type CandidateEvaluation struct {
 
 type Preparation struct {
 	Config               Config
+	ObjectiveNames       []string
 	Candidates           []Candidate
 	ReferencePoints      []ReferencePoint
 	Fronts               []Front
@@ -46,7 +48,13 @@ type Selection struct {
 
 func DefaultConfig() Config {
 	return Config{
-		Objectives: 2,
+		Objectives: 4,
 		Divisions:  4,
+		ObjectiveNames: []string{
+			"cpu_residual",
+			"memory_residual",
+			"qos_convenience",
+			"energy_convenience",
+		},
 	}
 }

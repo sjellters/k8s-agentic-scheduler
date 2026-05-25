@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	auctioncore "github.com/diego/k8s-agentic-scheduler/internal/auction"
+	"github.com/diego/k8s-agentic-scheduler/internal/governance"
 	auctionmanager "github.com/diego/k8s-agentic-scheduler/internal/manager"
 	"github.com/diego/k8s-agentic-scheduler/internal/nsga3"
 )
@@ -16,43 +18,69 @@ import (
 func main() {
 	nodes := flag.String("nodes", "localhost:50051", "Comma-separated list of node addresses")
 	selectorMode := flag.String("selector", "baseline", "Winner selector strategy: baseline or nsga3")
+	policyName := flag.String("policy", "", "Supervisor policy: balanced, capacity-first, black-friday, or energy-saver")
+	nodeProfilesFlag := flag.String("node-profiles", "", "Comma-separated node profiles in node-id=class form")
+	taskQoS := flag.Float64("task-qos", 0.5, "Normalized QoS sensitivity for the incoming task (0.0 to 1.0)")
+	traceFormat := flag.String("trace-format", "text", "Decision trace format: text or json")
 	flag.Parse()
 
 	nodeList := strings.Split(*nodes, ",")
 
-	task := auctioncore.Task{
-		ID:         "pod-xyz-123",
-		CPUReqNorm: 0.25,
-		RAMReqNorm: 0.40,
-	}
+	task := auctioncore.DefaultTask("pod-xyz-123", 0.25, 0.40)
+	task.QoSSensitivity = *taskQoS
 
 	log.Printf("==========================================")
 	log.Printf(" MANAGER STARTING AUCTION")
 	log.Printf(" POD ID:  %s", task.ID)
 	log.Printf(" REQ:     CPU %.2f | RAM %.2f", task.CPUReqNorm, task.RAMReqNorm)
+	log.Printf(" QoS:     %.2f", task.QoSSensitivity)
 	log.Printf("==========================================")
 
-	var selector auctionmanager.WinnerSelector
-	switch *selectorMode {
-	case "baseline":
-		selector = auctionmanager.NewBaselineSelector()
-	case "nsga3":
-		nsga3Selector, err := auctionmanager.NewNSGA3Selector(nsga3.DefaultConfig())
-		if err != nil {
-			log.Fatalf("failed to configure nsga3 selector: %v", err)
-		}
-		selector = nsga3Selector
-	default:
-		log.Fatalf("unsupported selector %q", *selectorMode)
+	requester := auctionmanager.NewGRPCBidRequester(time.Second)
+	nodeProfiles, err := parseNodeProfiles(*nodeProfilesFlag)
+	if err != nil {
+		log.Fatalf("failed to parse node profiles: %v", err)
 	}
+	selectorFactories := auctionmanager.NewSelectorFactory(nsga3.DefaultConfig(), nodeProfiles)
 
-	result, err := auctionmanager.RunAuctionWithSelector(
-		context.Background(),
-		auctionmanager.NewGRPCBidRequester(time.Second),
-		selector,
-		nodeList,
-		task,
+	var (
+		result auctionmanager.AuctionResult
 	)
+
+	if *policyName != "" {
+		policy, policyErr := governance.PolicyByName(*policyName)
+		if policyErr != nil {
+			log.Fatalf("failed to resolve policy: %v", policyErr)
+		}
+
+		supervisor, supervisorErr := governance.NewStaticSupervisor(policy)
+		if supervisorErr != nil {
+			log.Fatalf("failed to configure supervisor: %v", supervisorErr)
+		}
+
+		result, err = auctionmanager.RunAuctionWithSupervisor(
+			context.Background(),
+			requester,
+			supervisor,
+			selectorFactories,
+			nodeProfiles,
+			nodeList,
+			task,
+		)
+	} else {
+		selector, selectorErr := selectorByName(*selectorMode, selectorFactories)
+		if selectorErr != nil {
+			log.Fatalf("failed to configure selector: %v", selectorErr)
+		}
+
+		result, err = auctionmanager.RunAuctionWithSelector(
+			context.Background(),
+			requester,
+			selector,
+			nodeList,
+			task,
+		)
+	}
 	if err != nil {
 		log.Fatalf("failed to run auction: %v", err)
 	}
@@ -73,38 +101,7 @@ func main() {
 	}
 
 	log.Printf(" SELECTION STRATEGY: %s", result.SelectionStrategy)
-	logBaselineTrace(result)
-	if result.NSGA3Preparation != nil {
-		preparation := result.NSGA3Preparation
-		log.Printf(
-			" NSGA3 TRACE: %d candidates | %d reference points | %d fronts | %d objectives",
-			len(preparation.Candidates),
-			len(preparation.ReferencePoints),
-			len(preparation.Fronts),
-			preparation.Config.Objectives,
-		)
-		log.Printf(" IDEAL POINT: %s", formatValues(preparation.IdealPoint))
-		log.Printf(" ACTIVE REFERENCE POINT: %v", preparation.ReferencePoints[preparation.ActiveReferencePoint].Coordinates)
-		for _, evaluation := range preparation.Evaluations {
-			log.Printf(
-				" NSGA3 CANDIDATE: node %s | raw %s | normalized %s | front %d | distance %.4f | normalized-sum %.4f",
-				evaluation.Candidate.NodeID,
-				formatValues(evaluation.Candidate.Objectives),
-				formatValues(evaluation.NormalizedObjectives),
-				evaluation.FrontRank,
-				evaluation.Distance,
-				sumValues(evaluation.NormalizedObjectives),
-			)
-		}
-		if preparation.SelectedCandidate != nil {
-			log.Printf(
-				" NSGA3 WINNER TRACE: node %s | front %d | distance %.4f | balanced over pure sum",
-				preparation.SelectedCandidate.Candidate.NodeID,
-				preparation.SelectedCandidate.FrontRank,
-				preparation.SelectedCandidate.Distance,
-			)
-		}
-	}
+	logDecisionTrace(result, *traceFormat)
 
 	fmt.Println("------------------------------------------")
 	if result.HasWinner {
@@ -117,61 +114,70 @@ func main() {
 	fmt.Println("------------------------------------------")
 }
 
-func logBaselineTrace(result auctionmanager.AuctionResult) {
-	highestScore := 0.0
-	highestNodes := make([]string, 0)
-	firstAccepted := true
-
-	for _, nodeResult := range result.NodeResults {
-		if nodeResult.Err != nil || !nodeResult.Bid.Accepted {
-			continue
-		}
-
-		bid := nodeResult.Bid
-		score := bid.Score()
-		log.Printf(
-			" BASELINE CANDIDATE: node %s | F1 %.4f + F3 %.4f = score %.4f",
-			bid.NodeID,
-			bid.CPUFragmentation,
-			bid.RAMFragmentation,
-			score,
-		)
-
-		if firstAccepted || score > highestScore {
-			highestScore = score
-			highestNodes = []string{bid.NodeID}
-			firstAccepted = false
-			continue
-		}
-
-		if score == highestScore {
-			highestNodes = append(highestNodes, bid.NodeID)
-		}
+func selectorByName(name string, factories map[string]auctionmanager.SelectorFactory) (auctionmanager.WinnerSelector, error) {
+	factory, ok := factories[name]
+	if !ok {
+		return nil, fmt.Errorf("unsupported selector %q", name)
 	}
 
-	if len(highestNodes) > 1 {
-		log.Printf(
-			" BASELINE TIE: score %.4f shared by %s | winner resolved by first highest score encountered",
-			highestScore,
-			strings.Join(highestNodes, ", "),
-		)
+	return factory()
+}
+
+func logDecisionTrace(result auctionmanager.AuctionResult, format string) {
+	switch format {
+	case "text":
+		for _, line := range result.DecisionTrace.Lines() {
+			log.Print(" ", line)
+		}
+	case "json":
+		payload, err := json.MarshalIndent(result.DecisionTrace, "", "  ")
+		if err != nil {
+			log.Printf(" failed to marshal decision trace: %v", err)
+			return
+		}
+		log.Printf(" DECISION TRACE JSON:\n%s", string(payload))
+	default:
+		log.Fatalf("unsupported trace format %q", format)
 	}
 }
 
-func formatValues(values []float64) string {
-	parts := make([]string, 0, len(values))
-	for _, value := range values {
-		parts = append(parts, fmt.Sprintf("%.4f", value))
+func parseNodeProfiles(raw string) (map[string]auctioncore.NodeProfile, error) {
+	profiles := make(map[string]auctioncore.NodeProfile)
+	if raw == "" {
+		return profiles, nil
 	}
 
-	return "[" + strings.Join(parts, ", ") + "]"
+	for _, entry := range strings.Split(raw, ",") {
+		parts := strings.SplitN(strings.TrimSpace(entry), "=", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("invalid node profile entry %q", entry)
+		}
+
+		nodeID := strings.TrimSpace(parts[0])
+		className := strings.TrimSpace(parts[1])
+		if nodeID == "" || className == "" {
+			return nil, fmt.Errorf("invalid node profile entry %q", entry)
+		}
+
+		class, err := parseNodeClass(className)
+		if err != nil {
+			return nil, err
+		}
+		profiles[nodeID] = auctioncore.ProfileForNodeClass(class)
+	}
+
+	return profiles, nil
 }
 
-func sumValues(values []float64) float64 {
-	total := 0.0
-	for _, value := range values {
-		total += value
+func parseNodeClass(raw string) (auctioncore.NodeClass, error) {
+	switch raw {
+	case string(auctioncore.NodeClassHighPerformance):
+		return auctioncore.NodeClassHighPerformance, nil
+	case string(auctioncore.NodeClassBalanced):
+		return auctioncore.NodeClassBalanced, nil
+	case string(auctioncore.NodeClassHighEfficiency):
+		return auctioncore.NodeClassHighEfficiency, nil
+	default:
+		return "", fmt.Errorf("unsupported node class %q", raw)
 	}
-
-	return total
 }
